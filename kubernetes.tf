@@ -12,11 +12,11 @@ terraform {
   }
 }
 
+# Get terraform state from the EKS cluster provision project
 data "terraform_remote_state" "eks" {
   backend = "s3"
 
   config = {
-    # path = "../learn-terraform-provision-eks-cluster/terraform.tfstate"
     bucket         = "terraform-wy"
     key            = "learn-terraform-kubernetes"
     region         = "us-west-2"
@@ -57,7 +57,8 @@ resource "kubernetes_deployment" "petstore" {
   }
 
   spec {
-    replicas = 2
+    # Comment out the replicas setting so that HPA (Horizontal Pod AutoScaler) would take care of the scaling
+    # replicas = 2
     selector {
       match_labels = {
         App = "ScalableApiExample"
@@ -80,7 +81,7 @@ resource "kubernetes_deployment" "petstore" {
 
           resources {
             limits = {
-              cpu    = "0.5"
+              cpu    = "0.8"
               memory = "512Mi"
             }
             requests = {
@@ -88,6 +89,46 @@ resource "kubernetes_deployment" "petstore" {
               memory = "50Mi"
             }
           }
+        }
+      }
+    }
+  }
+}
+
+# Auto scaling with Horizontal Pod Autoscaler, it requires metric server on the cluster
+# https://docs.aws.amazon.com/eks/latest/userguide/metrics-server.html
+resource "kubernetes_horizontal_pod_autoscaler_v2beta2" "petstore" {
+  metadata {
+    name = "api-hpa"
+  }
+  spec {
+    min_replicas = 1
+    max_replicas = 10
+
+    scale_target_ref {
+      api_version = "apps/v1"
+      kind = "Deployment"
+      name = kubernetes_deployment.petstore.metadata[0].name
+    }
+
+    metric {
+      type = "Resource"
+      resource {
+        name = "cpu"
+        target {
+          type                = "Utilization"
+          average_utilization = 75
+        }
+      }
+    }
+
+    metric {
+      type = "Resource"
+      resource {
+        name = "memory"
+        target {
+          type          = "AverageValue"
+          average_value = "400Mi"
         }
       }
     }
